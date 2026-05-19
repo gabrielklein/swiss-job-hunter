@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Optional, Tuple
 from urllib.parse import urlencode
 
 from bs4 import BeautifulSoup
@@ -102,11 +102,63 @@ class ZuriJobsScraper(BaseScraper):
                 description=description,
                 url=url,
                 source=self.source_name,
+                source_job_id=url,
                 salary_raw=salary_raw,
                 posted_at=posted_at,
             )
         except Exception as exc:
             print(f"[züri.jobs] json-ld parse error: {exc}")
+            return None
+
+    async def fetch_full_description(self, job_url: str) -> Optional[Tuple[str, str]]:
+        """Fetch full description from a züri.jobs detail page URL.
+
+        Returns (description, canonical_url), empty tuple () for 404/gone, or None on error.
+        """
+        if not job_url or not job_url.startswith("http"):
+            return None
+        try:
+            resp = await self._fetch(job_url)
+            if resp.status_code == 404:
+                return ()  # type: ignore
+            soup = BeautifulSoup(resp.text, "lxml")
+
+            canonical = ""
+            canon_el = soup.select_one("link[rel='canonical']")
+            if canon_el:
+                canonical = canon_el.get("href", "")
+
+            # Try JSON-LD first — detail pages embed the full description there
+            for script in soup.select("script[type='application/ld+json']"):
+                try:
+                    data = json.loads(script.string or "")
+                    items = data if isinstance(data, list) else [data]
+                    for item in items:
+                        if item.get("@type") not in ("JobPosting", "jobPosting"):
+                            continue
+                        raw = item.get("description", "").strip()
+                        if len(raw) > 200:
+                            desc = BeautifulSoup(raw, "lxml").get_text(separator="\n", strip=True)
+                            return desc, canonical or job_url
+                except (json.JSONDecodeError, AttributeError):
+                    continue
+
+            # HTML fallbacks
+            for sel in [
+                "div[class*='job-description']",
+                "div[class*='description']",
+                "article",
+                "main",
+            ]:
+                el = soup.select_one(sel)
+                if el:
+                    text = el.get_text(separator="\n", strip=True)
+                    if len(text) > 200:
+                        return text, canonical or job_url
+
+            return None
+        except Exception as exc:
+            print(f"[züri.jobs] detail fetch error for {job_url}: {exc}")
             return None
 
     def _parse_html(self, soup: BeautifulSoup):  # type: ignore[override]
@@ -134,12 +186,10 @@ class ZuriJobsScraper(BaseScraper):
                             location = tag.replace("📍", "").strip()
                             break
 
-                job_id = card.get("data-jobid", "")
-
                 yield ScrapedJob(
                     title=title, company=company, location=location,
                     description="", url=url, source=self.source_name,
-                    source_job_id=job_id,
+                    source_job_id=url,
                 )
             except Exception:
                 continue

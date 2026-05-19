@@ -110,6 +110,21 @@ def get_stats():
     }
 
 
+@app.delete("/jobs/{job_id}")
+def delete_job(job_id: int):
+    from db.session import get_session
+    from db.models import Job, RawJob, Application, JobEvent
+    with get_session() as session:
+        job = session.get(Job, job_id)
+        if not job:
+            raise HTTPException(404, "Job not found")
+        session.query(JobEvent).filter(JobEvent.job_id == job_id).delete()
+        session.query(Application).filter(Application.job_id == job_id).delete()
+        session.query(RawJob).filter(RawJob.canonical_id == job_id).delete()
+        session.delete(job)
+    return {"ok": True}
+
+
 @app.patch("/jobs/{job_id}/status")
 def update_status(job_id: int, body: dict):
     from db.session import get_session
@@ -246,12 +261,20 @@ async def run_enrich(req: EnrichRequest):
             job_data = []
             for j in jobs:
                 dlen = len(j.description or "")
-                # Use source_job_id directly, or extract UUID from URL as fallback
+                # Resolve the identifier to pass to fetch_full_description:
+                # - UUID source_job_id → pass as-is (jobs.ch style)
+                # - URL source_job_id → pass as-is (züri.jobs new records)
+                # - purely numeric source_job_id → substitute j.url (züri.jobs old,
+                #   efinancialcareers, linkedin store numeric IDs that need the full URL)
+                # - slug source_job_id → pass as-is (swissdevjobs)
+                # - no source_job_id → extract UUID from URL, else use URL
                 sjid = j.source_job_id
-                if not sjid and j.url:
+                _uuid_re = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                if sjid and sjid.isdigit() and j.url:
+                    sjid = j.url
+                elif not sjid and j.url:
                     m = _re.search(r'/detail/([a-f0-9-]{36})', j.url)
-                    if m:
-                        sjid = m.group(1)
+                    sjid = m.group(1) if m else j.url
                 if sjid:
                     job_data.append((j.id, sjid, dlen))
 
@@ -261,7 +284,12 @@ async def run_enrich(req: EnrichRequest):
         # Generic enrich — works for any scraper that implements fetch_full_description
         scraper_map = {
             "jobs.ch": "scrapers.jobs_ch.JobsChScraper",
+            "jobscout24.ch": "scrapers.jobscout24.JobScout24Scraper",
             "swissdevjobs.ch": "scrapers.swissdevjobs.SwissDevJobsScraper",
+            "züri.jobs": "scrapers.zuri_jobs.ZuriJobsScraper",
+            "efinancialcareers.ch": "scrapers.efinancialcareers.EFinancialCareersScraper",
+            "linkedin.com": "scrapers.linkedin_rss.LinkedInRssScraper",
+            "michael-page.ch": "scrapers.michael_page.MichaelPageScraper",
         }
 
         scraper_path = scraper_map.get(req.source)

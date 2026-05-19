@@ -31,7 +31,7 @@ const EVENT_META = {
   note:           { icon: "📝",  label: "Note",              color: "#4a7a60" },
 };
 
-const SOURCES = ["jobs.ch","swissdevjobs.ch","jobup.ch","züri.jobs","efinancialcareers.ch","linkedin.com"];
+const SOURCES = ["jobs.ch","jobscout24.ch","swissdevjobs.ch","jobup.ch","züri.jobs","efinancialcareers.ch","linkedin.com","michael-page.ch"];
 
 const APPLY_METHODS = [
   { id: "email",    label: "Email",    icon: "📧" },
@@ -516,6 +516,12 @@ export default function App() {
     setLoading(p=>({...p,cover:false}));
   };
 
+  const deleteJob = async (jobId) => {
+    await fetch(`${API}/jobs/${jobId}`, { method: "DELETE" });
+    if (selected?.id === jobId) setSelected(null);
+    fetchJobs(); fetchStats();
+  };
+
   const updateStatus = async (jobId, status) => {
     await fetch(`${API}/jobs/${jobId}/status`,{
       method:"PATCH",headers:{"Content-Type":"application/json"},
@@ -628,10 +634,11 @@ export default function App() {
                 <div style={{padding:14,borderBottom:"1px solid #d4dece",display:"flex",flexDirection:"column",gap:7}}>
                   <div style={{fontSize:9,color:"#5a7a68",letterSpacing:"0.12em",fontWeight:700,marginBottom:2}}>② PIPELINE</div>
                   <Btn onClick={()=>{
-                    // Enrich each source separately
-                    const sources = searchSrc.filter(s => ["jobs.ch","swissdevjobs.ch","jobup.ch","züri.jobs"].includes(s));
-                    sources.forEach(src => runStream("run/enrich",{limit:50,source:src},`enrich-${src}`));
-                    if(!sources.length) runStream("run/enrich",{limit:50,source:"jobs.ch"},"enrich");
+                    // Enrich each selected source (server rejects unsupported ones gracefully)
+                    const enrichable = ["jobs.ch","jobscout24.ch","swissdevjobs.ch","züri.jobs","efinancialcareers.ch","linkedin.com","michael-page.ch"];
+                    const sources = searchSrc.filter(s => enrichable.includes(s));
+                    if(sources.length) sources.forEach(src => runStream("run/enrich",{limit:50,source:src},`enrich-${src}`));
+                    else runStream("run/enrich",{limit:50,source:searchSrc[0]||"jobs.ch"},"enrich");
                   }}
                     loading={loading.enrich} label="ENRICH DESCRIPTIONS" icon="📄"
                     color="#2e7d52" disabled={!stats.total}/>
@@ -695,7 +702,7 @@ export default function App() {
                         style={{
                           padding:"9px 14px",borderBottom:"1px solid #e8ede4",
                           borderLeft:"2px solid transparent",
-                          display:"grid",gridTemplateColumns:"26px 1fr 100px 66px 52px",
+                          display:"grid",gridTemplateColumns:"26px 1fr 100px 66px 52px 18px",
                           alignItems:"center",gap:8,cursor:"pointer",transition:"background 0.1s",
                         }}>
                         <span style={{fontSize:9,color:"#6b8c7a",fontWeight:700}}>#{j.id}</span>
@@ -711,6 +718,15 @@ export default function App() {
                         <div style={{fontSize:8,color:"#6b8c7a",textAlign:"right",fontFamily:"monospace"}}>
                           {j.source?.replace(/\.(ch|com)/,"")}
                         </div>
+                        <button onClick={e=>{e.stopPropagation();deleteJob(j.id);}} title="Delete"
+                          style={{border:"none",background:"none",color:"#b0c4b8",cursor:"pointer",
+                            padding:0,fontSize:12,lineHeight:1,display:"flex",alignItems:"center",
+                            justifyContent:"center",borderRadius:3,width:18,height:18,
+                            transition:"color 0.15s, background 0.15s"}}
+                          onMouseEnter={e=>{e.currentTarget.style.color="#c0392b";e.currentTarget.style.background="#fde8e4";}}
+                          onMouseLeave={e=>{e.currentTarget.style.color="#b0c4b8";e.currentTarget.style.background="none";}}>
+                          ✕
+                        </button>
                       </div>
                     ))
                   }

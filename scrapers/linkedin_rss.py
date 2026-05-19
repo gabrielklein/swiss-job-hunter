@@ -4,7 +4,8 @@ Scraper for LinkedIn Jobs — uses Playwright (public job listings, no login req
 from __future__ import annotations
 
 import re
-from typing import AsyncGenerator, Optional
+from datetime import datetime
+from typing import AsyncGenerator, Optional, Tuple
 from urllib.parse import quote_plus
 
 from playwright.async_api import async_playwright
@@ -89,6 +90,15 @@ class LinkedInRssScraper(BaseScraper):
             job_id = m.group(1) if m else href
             url = f"https://www.linkedin.com/jobs/view/{job_id}/" if job_id.isdigit() else href
 
+            time_el = await card.query_selector("time")
+            posted_at = None
+            if time_el:
+                dt = await time_el.get_attribute("datetime")
+                try:
+                    posted_at = datetime.fromisoformat(dt) if dt else None
+                except (ValueError, TypeError):
+                    pass
+
             return ScrapedJob(
                 title=title,
                 company=company,
@@ -97,7 +107,43 @@ class LinkedInRssScraper(BaseScraper):
                 url=url,
                 source=self.source_name,
                 source_job_id=job_id,
+                posted_at=posted_at,
             )
         except Exception as exc:
             print(f"[linkedin] parse error: {exc}")
+            return None
+
+    async def fetch_full_description(self, job_url: str) -> Optional[Tuple[str, str]]:
+        """Fetch full description via LinkedIn's public guest job API.
+
+        Accepts a /jobs/view/{id}/ URL or a bare numeric ID.
+        Returns (description, canonical_url), () for 404/gone, or None on error.
+        """
+        from bs4 import BeautifulSoup
+
+        # Extract numeric job ID from URL or bare string
+        m = re.search(r"(\d{6,})", job_url)
+        if not m:
+            return None
+        job_id = m.group(1)
+
+        api_url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
+        canonical = f"https://www.linkedin.com/jobs/view/{job_id}/"
+        try:
+            resp = await self._fetch(api_url)
+            if resp.status_code == 404:
+                return ()  # type: ignore
+            soup = BeautifulSoup(resp.text, "lxml")
+
+            el = soup.select_one(".show-more-less-html__markup")
+            if not el:
+                el = soup.select_one(".description__text")
+            if el:
+                text = el.get_text(separator="\n", strip=True)
+                if len(text) > 100:
+                    return text, canonical
+
+            return None
+        except Exception as exc:
+            print(f"[linkedin] detail fetch error for {job_id}: {exc}")
             return None

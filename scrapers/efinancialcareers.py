@@ -3,8 +3,9 @@ Scraper for eFinancialCareers CH — Angular SPA, requires Playwright.
 """
 from __future__ import annotations
 
+import json
 import re
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Optional, Tuple
 from urllib.parse import quote_plus
 
 from playwright.async_api import async_playwright
@@ -99,4 +100,48 @@ class EFinancialCareersScraper(BaseScraper):
             )
         except Exception as exc:
             print(f"[efinancialcareers] parse error: {exc}")
+            return None
+
+    async def fetch_full_description(self, job_url: str) -> Optional[Tuple[str, str]]:
+        """Fetch full description from an eFinancialCareers detail page.
+
+        The page is SSR'd with job data embedded in an application/ld+json script block.
+        Returns (description, canonical_url), () for 404/gone, or None on error.
+        """
+        if not job_url or not job_url.startswith("http"):
+            return None
+        try:
+            from bs4 import BeautifulSoup
+            resp = await self._fetch(job_url)
+            if resp.status_code == 404:
+                return ()  # type: ignore
+            soup = BeautifulSoup(resp.text, "lxml")
+
+            canonical = ""
+            canon_el = soup.find("link", rel="canonical")
+            if canon_el:
+                canonical = canon_el.get("href", "")
+
+            # Job data is in a script[type=application/ld+json] that contains
+            # a 'description' key (not a standard @type:JobPosting, but a DHI custom object)
+            for script in soup.find_all("script"):
+                stype = script.get("type", "")
+                if "json" not in stype:
+                    continue
+                try:
+                    data = json.loads(script.string or "")
+                    if not isinstance(data, dict):
+                        continue
+                    raw_desc = data.get("description", "")
+                    if len(raw_desc) > 200:
+                        desc = BeautifulSoup(raw_desc, "lxml").get_text(
+                            separator="\n", strip=True
+                        )
+                        return desc, canonical or job_url
+                except (json.JSONDecodeError, AttributeError):
+                    continue
+
+            return None
+        except Exception as exc:
+            print(f"[efinancialcareers] detail fetch error for {job_url}: {exc}")
             return None

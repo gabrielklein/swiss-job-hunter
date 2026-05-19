@@ -111,11 +111,7 @@ class SwissDevJobsScraper(BaseScraper):
                         salary_raw = text
                         break
 
-            # Tech tags as description
-            description = ""
-            tech_el = await card.query_selector("[class*='tech'], [class*='tag'], [class*='badge']")
-            if tech_el:
-                description = (await tech_el.inner_text()).strip()
+            description = ""  # filled by Enrich step
 
             if not title:
                 return None
