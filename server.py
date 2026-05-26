@@ -657,17 +657,22 @@ async def lookup_company(body: dict):
     return {"name": name, "summary": summary, "cached": False}
 
 
+class CompanyLookupRequest(BaseModel):
+    min_score: float = 0.0
+
+
 @app.post("/run/company-lookup")
-async def run_company_lookup():
+async def run_company_lookup(req: CompanyLookupRequest = CompanyLookupRequest()):
     async def gen():
         from db.session import get_session, init_db
         from db.models import Job, CompanyInfo
         init_db()
 
         with get_session() as session:
-            all_companies = {
-                row[0] for row in session.query(Job.company).distinct().all() if row[0]
-            }
+            q = session.query(Job.company).distinct()
+            if req.min_score > 0:
+                q = q.filter(Job.match_score >= req.min_score)
+            all_companies = {row[0] for row in q.all() if row[0]}
             cached = {
                 row[0] for row in session.query(CompanyInfo.name).all()
             }

@@ -447,14 +447,12 @@ export default function App() {
   const [searchSrc, setSearchSrc] = useState(["jobs.ch"]);
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterText, setFilterText] = useState("");
-  const [filterMinScore, setFilterMinScore] = useState(0);
   const [filterMinStars, setFilterMinStars] = useState(0);
   const [coverLetter, setCoverLetter] = useState("");
   const [coverLang, setCoverLang] = useState("en");
-  const [archiveBelow, setArchiveBelow] = useState(10); // percent
+  const [threshold, setThreshold] = useState(10); // percent — shared by archive/purge/filter/lookup
   const [searchPages, setSearchPages] = useState(3);
   const [linkedinTimeRange, setLinkedinTimeRange] = useState("r604800");
-  const [purgeBelow, setPurgeBelow] = useState(10); // percent
   const [direction, setDirection] = useState("all");
   const [directions, setDirections] = useState(DIRECTIONS_FALLBACK);
   const [mainTab, setMainTab] = useState("board");   // board | tracker
@@ -481,8 +479,8 @@ export default function App() {
   }, [filterStatus, filterText, direction, filterMinStars, addLog, backendOk]);
 
   const fetchStats = useCallback(async () => {
-    try { const r=await fetch(`${API}/stats?threshold=${filterMinScore/100}`); if(r.ok) setStats(await r.json()); } catch {}
-  }, [filterMinScore]);
+    try { const r=await fetch(`${API}/stats?threshold=${threshold/100}`); if(r.ok) setStats(await r.json()); } catch {}
+  }, [threshold]);
 
   useEffect(() => { fetchJobs(); fetchStats(); }, [fetchJobs, fetchStats]);
 
@@ -633,7 +631,7 @@ export default function App() {
 
   const visible = jobs.filter(j=>
     (filterStatus==="all"||j.status===filterStatus) &&
-    (filterMinScore===0 || (j.match_score!=null && j.match_score*100 >= filterMinScore))
+    (threshold===0 || (j.match_score!=null && j.match_score*100 >= threshold))
   );
 
   const Tab = ({id,label,active,onClick}) => (
@@ -796,38 +794,22 @@ export default function App() {
                     loading={loading.analyze} label="SCORE (KEYWORD)" icon="⚡"
                     color="#f59e0b" disabled={!stats.total}/>
                   <div style={{display:"flex",alignItems:"center",gap:6}}>
-                    <Btn onClick={()=>runStream("run/analyze",{limit:200,llm:true,archive_below:archiveBelow/100,direction:direction==="all"?null:direction},"analyze-llm")}
+                    <Btn onClick={()=>runStream("run/analyze",{limit:200,llm:true,archive_below:threshold/100,direction:direction==="all"?null:direction},"analyze-llm")}
                       loading={loading["analyze-llm"]} label="SCORE (LLM)" icon="🧠"
                       color="#a78bfa" disabled={!stats.total}/>
-                    <Btn onClick={()=>runStream("run/analyze",{llm:true,skip_scored:false,archive_below:archiveBelow/100,concurrency:10,direction:direction==="all"?null:direction},"rescore-all")}
+                    <Btn onClick={()=>runStream("run/analyze",{llm:true,skip_scored:false,archive_below:threshold/100,concurrency:10,direction:direction==="all"?null:direction},"rescore-all")}
                       loading={loading["rescore-all"]} label="RESCORE ALL" icon="🔄"
                       color="#6366f1" disabled={!stats.total}/>
-                    <div style={{display:"flex",alignItems:"center",gap:4,marginLeft:"auto"}}>
-                      <span style={{fontSize:8,color:"#6b8c7a",fontFamily:"monospace",whiteSpace:"nowrap"}}>archive &lt;</span>
-                      <input type="number" min={0} max={50} step={5} value={archiveBelow}
-                        onChange={e=>setArchiveBelow(Number(e.target.value))}
-                        style={{width:44,padding:"2px 4px",borderRadius:3,border:"1px solid #c8d8c4",
-                          background:"#fff",color:"#2c4a38",fontSize:10,fontFamily:"monospace",textAlign:"center"}}/>
-                      <span style={{fontSize:8,color:"#6b8c7a",fontFamily:"monospace"}}>%</span>
-                    </div>
                   </div>
-                  <Btn onClick={()=>runStream("run/company-lookup",{},"company-lookup")}
+                  <Btn onClick={()=>runStream("run/company-lookup",{min_score:threshold/100},"company-lookup")}
                     loading={loading["company-lookup"]} label="LOOKUP COMPANIES" icon="🏢"
                     color="#2e7d52" disabled={!stats.total}/>
                   <div style={{height:1,background:"#d4dece",margin:"2px 0"}}/>
                   <div style={{display:"flex",alignItems:"center",gap:5}}>
-                    <Btn onClick={()=>runStream("run/purge-archived",{max_score:purgeBelow/100,dry_run:true},"purge-preview")}
+                    <Btn onClick={()=>runStream("run/purge-archived",{max_score:threshold/100,dry_run:true},"purge-preview")}
                       loading={loading["purge-preview"]} label="PREVIEW" icon="🔍" small color="#6b8c7a"/>
-                    <Btn onClick={()=>runStream("run/purge-archived",{max_score:purgeBelow/100,dry_run:false},"purge")}
+                    <Btn onClick={()=>runStream("run/purge-archived",{max_score:threshold/100,dry_run:false},"purge")}
                       loading={loading["purge"]} label="PURGE" icon="🗑" small color="#f87171"/>
-                    <div style={{display:"flex",alignItems:"center",gap:4,marginLeft:"auto"}}>
-                      <span style={{fontSize:8,color:"#6b8c7a",fontFamily:"monospace",whiteSpace:"nowrap"}}>purge &lt;</span>
-                      <input type="number" min={0} max={50} step={5} value={purgeBelow}
-                        onChange={e=>setPurgeBelow(Number(e.target.value))}
-                        style={{width:44,padding:"2px 4px",borderRadius:3,border:"1px solid #c8d8c4",
-                          background:"#fff",color:"#2c4a38",fontSize:10,fontFamily:"monospace",textAlign:"center"}}/>
-                      <span style={{fontSize:8,color:"#6b8c7a",fontFamily:"monospace"}}>%</span>
-                    </div>
                   </div>
                 </div>
 
@@ -849,15 +831,11 @@ export default function App() {
                     <input value={filterText} onChange={e=>setFilterText(e.target.value)}
                       placeholder="search title / company..." style={{...inp,fontSize:10,flex:1}}/>
                     <div style={{display:"flex",alignItems:"center",gap:3,flexShrink:0}}>
-                      <span style={{fontSize:9,color:"#5a7a68",fontFamily:"monospace",whiteSpace:"nowrap"}}>≥</span>
-                      <input type="number" min={0} max={100} value={filterMinScore}
-                        onChange={e=>{const v=Math.max(0,Math.min(100,parseInt(e.target.value)||0));setFilterMinScore(v);}}
-                        title="min score %" style={{...inp,width:52,textAlign:"center",fontSize:10}}/>
+                      <span style={{fontSize:9,color:"#5a7a68",fontFamily:"monospace",whiteSpace:"nowrap"}}>threshold</span>
+                      <input type="number" min={0} max={100} step={5} value={threshold}
+                        onChange={e=>{const v=Math.max(0,Math.min(100,parseInt(e.target.value)||0));setThreshold(v);}}
+                        title="score threshold % — used by filter, archive, purge, lookup" style={{...inp,width:44,textAlign:"center",fontSize:10}}/>
                       <span style={{fontSize:9,color:"#5a7a68",fontFamily:"monospace"}}>%</span>
-                      {filterMinScore>0&&<button onClick={()=>setFilterMinScore(0)} style={{
-                        fontSize:9,padding:"2px 5px",borderRadius:3,border:"1px solid #d4dece",
-                        background:"transparent",color:"#6b8c7a",cursor:"pointer",fontFamily:"monospace",
-                      }}>✕</button>}
                     </div>
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:4}}>
